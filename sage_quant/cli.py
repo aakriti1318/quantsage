@@ -13,15 +13,24 @@ from sage_quant.catalog import get_engine_note, get_algo_note
 
 app = typer.Typer(help="SageQuant: Inference tradeoff calculator")
 
+
 def parse_model_size(size_str: str) -> float:
     s = size_str.lower().strip()
+    if s.startswith('-'):
+        typer.echo(f"Error: Model size cannot be negative: '{size_str}'.", err=True)
+        raise typer.Exit(code=1)
     if s.endswith('b'):
         s = s[:-1]
     try:
-        return float(s)
+        value = float(s)
     except ValueError:
         typer.echo(f"Error: Invalid model size format '{size_str}'. Expected formats like '7b', '70b', or '7.0'.", err=True)
         raise typer.Exit(code=1)
+    if value <= 0:
+        typer.echo(f"Error: Model size must be greater than 0 (got '{size_str}').", err=True)
+        raise typer.Exit(code=1)
+    return value
+
 
 def parse_latency(latency_str: Optional[str]) -> Optional[float]:
     if not latency_str:
@@ -31,21 +40,73 @@ def parse_latency(latency_str: Optional[str]) -> Optional[float]:
         s = s[:-2]
     elif s.endswith('s'):
         try:
-            return float(s[:-1]) * 1000.0
+            val = float(s[:-1]) * 1000.0
+            if val <= 0:
+                typer.echo(f"Error: Latency must be greater than 0 (got '{latency_str}').", err=True)
+                raise typer.Exit(code=1)
+            return val
         except ValueError:
             pass
     try:
-        return float(s)
+        val = float(s)
     except ValueError:
         typer.echo(f"Error: Invalid latency format '{latency_str}'. Expected formats like '200ms', '0.2s', or '200'.", err=True)
         raise typer.Exit(code=1)
+    if val <= 0:
+        typer.echo(f"Error: Latency must be greater than 0 (got '{latency_str}').", err=True)
+        raise typer.Exit(code=1)
+    return val
+
 
 def resolve_dataset_path(config: Dict[str, Any]) -> str:
+    """
+    Resolve the dataset path. Priority:
+    1. Explicit dataset_path from config file.
+    2. Bundled data/benchmarks.csv inside the package (survives pip install).
+    3. Fallback: relative to the package directory (for dev/editable installs).
+    """
     dataset_path = config.get("dataset_path")
     if dataset_path:
         return os.path.expanduser(dataset_path)
-    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    return os.path.join(base_dir, "data", "benchmarks.csv")
+
+    # Use importlib.resources to find the bundled file after pip install
+    try:
+        import importlib.resources as pkg_resources
+        # Python 3.9+
+        ref = pkg_resources.files("sage_quant").joinpath("datasets/benchmarks.csv")
+        with pkg_resources.as_file(ref) as p:
+            if os.path.exists(str(p)):
+                return str(p)
+    except (AttributeError, TypeError, FileNotFoundError):
+        pass
+
+    # Fallback for editable/dev installs: file relative to package directory
+    pkg_dir = os.path.dirname(os.path.abspath(__file__))
+    candidate = os.path.join(pkg_dir, "datasets", "benchmarks.csv")
+    if os.path.exists(candidate):
+        return candidate
+
+    # Last fallback: two levels up (repo root / data/)
+    repo_root = os.path.dirname(os.path.dirname(pkg_dir))
+    return os.path.join(repo_root, "data", "benchmarks.csv")
+
+
+def validate_tokens(prompt_tokens: int, output_tokens: int) -> None:
+    if prompt_tokens < 0:
+        typer.echo("Error: --prompt-tokens cannot be negative.", err=True)
+        raise typer.Exit(code=1)
+    if output_tokens < 0:
+        typer.echo("Error: --output-tokens cannot be negative.", err=True)
+        raise typer.Exit(code=1)
+
+
+def validate_hardware(hw: str) -> str:
+    hw = hw.strip()
+    if not hw:
+        typer.echo("Error: --hardware cannot be empty or whitespace.", err=True)
+        raise typer.Exit(code=1)
+    return hw.lower()
+
 
 @app.command(name="recommend")
 def recommend_cmd(
@@ -62,26 +123,34 @@ def recommend_cmd(
     Recommend an inference engine, quantization algorithm, and bit-width scheme.
     """
     config = load_config(config_path)
-    
+
     final_hw = hardware or config.get("default_hardware")
     if not final_hw:
         typer.echo("Error: Hardware must be specified via --hardware or configured as 'default_hardware' in config.yaml.", err=True)
         raise typer.Exit(code=1)
-        
+
+    final_hw = validate_hardware(final_hw)
+    validate_tokens(prompt_tokens, output_tokens)
+
     final_quality = min_quality
     if final_quality is None:
         final_quality = float(config.get("min_quality_default", 97.0))
-        
+
     dataset_path = resolve_dataset_path(config)
     if not os.path.exists(dataset_path):
         typer.echo(f"Error: Dataset not found at {dataset_path}", err=True)
+        typer.echo("Tip: Run 'sage-quant list-hardware' after installing to confirm the bundled dataset is accessible.", err=True)
         raise typer.Exit(code=1)
-        
-    dataset = load_dataset(dataset_path)
-    
+
+    try:
+        dataset = load_dataset(dataset_path)
+    except (OSError, ValueError) as e:
+        typer.echo(f"Error loading dataset: {e}", err=True)
+        raise typer.Exit(code=1)
+
     parsed_model_size = parse_model_size(model_size)
     parsed_latency = parse_latency(max_latency)
-    
+
     constraint = Constraint(
         model_size_b=parsed_model_size,
         hardware=final_hw,
@@ -91,24 +160,24 @@ def recommend_cmd(
         output_tokens=output_tokens,
         prefer_engine=prefer_engine
     )
-    
+
     rec = recommend(constraint, dataset)
     if rec is None:
         typer.echo("no matching data — try a different hardware or looser quality bound", err=True)
         raise typer.Exit(code=1)
-        
+
     num_runs = len(rec.source_rows)
     runs_str = "run" if num_runs == 1 else "runs"
-    
+
     algo_display = rec.quant_algo.upper() if rec.quant_algo != "none" else "none"
     cache_display = "on" if rec.prefix_caching else "off"
     engine_name = rec.inference_engine.upper() if rec.inference_engine != 'mlx' else 'MLX'
-    
+
     typer.echo(f"Recommended: {engine_name} + {algo_display} ({rec.quant_scheme}), prefix caching {cache_display}")
     typer.echo(f"Workload: {constraint.prompt_tokens} in / {constraint.output_tokens} out tokens")
     typer.echo(f"Expected: {rec.expected_ttft_p50_ms:.0f}ms TTFT (p50) · {rec.expected_ttft_p95_ms:.0f}ms TTFT (p95) · {rec.expected_throughput:.1f} tok/s · {rec.quality_delta_pct:+.1f}% quality ({rec.eval_method}, n={rec.eval_sample_size})")
     typer.echo(f"Confidence: {rec.confidence} ({num_runs} matching benchmark {runs_str})")
-    
+
     engine_note = get_engine_note(rec.inference_engine)
     algo_note = get_algo_note(rec.quant_algo)
     if engine_note or algo_note:
@@ -117,6 +186,7 @@ def recommend_cmd(
             typer.echo(f"Note (Engine): {engine_note}")
         if algo_note:
             typer.echo(f"Note (Algo): {algo_note}")
+
 
 @app.command(name="serve-config")
 def serve_config_cmd(
@@ -140,13 +210,21 @@ def serve_config_cmd(
         typer.echo("Error: Hardware must be specified via --hardware or configured as 'default_hardware' in config.yaml.", err=True)
         raise typer.Exit(code=1)
 
+    final_hw = validate_hardware(final_hw)
+    validate_tokens(prompt_tokens, output_tokens)
+
     final_quality = min_quality if min_quality is not None else float(config.get("min_quality_default", 97.0))
     dataset_path = resolve_dataset_path(config)
     if not os.path.exists(dataset_path):
         typer.echo(f"Error: Dataset not found at {dataset_path}", err=True)
         raise typer.Exit(code=1)
 
-    dataset = load_dataset(dataset_path)
+    try:
+        dataset = load_dataset(dataset_path)
+    except (OSError, ValueError) as e:
+        typer.echo(f"Error loading dataset: {e}", err=True)
+        raise typer.Exit(code=1)
+
     parsed_model_size = parse_model_size(model_size)
     parsed_latency = parse_latency(max_latency)
 
@@ -198,6 +276,7 @@ def serve_config_cmd(
     for step in cfg["instructions"]:
         typer.echo(f"  {step}")
 
+
 @app.command(name="list-hardware")
 def list_hardware_cmd(
     config_path: Optional[str] = typer.Option(None, "--config", "-c", help="Path to config.yaml")
@@ -210,11 +289,17 @@ def list_hardware_cmd(
     if not os.path.exists(dataset_path):
         typer.echo(f"Error: Dataset not found at {dataset_path}", err=True)
         raise typer.Exit(code=1)
-        
-    dataset = load_dataset(dataset_path)
+
+    try:
+        dataset = load_dataset(dataset_path)
+    except (OSError, ValueError) as e:
+        typer.echo(f"Error loading dataset: {e}", err=True)
+        raise typer.Exit(code=1)
+
     unique_hw = sorted(list(set(row["hardware"] for row in dataset)))
     for hw in unique_hw:
         typer.echo(hw)
+
 
 @app.command(name="list-engines")
 def list_engines_cmd(
@@ -228,11 +313,17 @@ def list_engines_cmd(
     if not os.path.exists(dataset_path):
         typer.echo(f"Error: Dataset not found at {dataset_path}", err=True)
         raise typer.Exit(code=1)
-        
-    dataset = load_dataset(dataset_path)
+
+    try:
+        dataset = load_dataset(dataset_path)
+    except (OSError, ValueError) as e:
+        typer.echo(f"Error loading dataset: {e}", err=True)
+        raise typer.Exit(code=1)
+
     unique_engines = sorted(list(set(row["inference_engine"] for row in dataset)))
     for engine in unique_engines:
         typer.echo(engine)
+
 
 @app.command(name="list-quant-algos")
 def list_quant_algos_cmd(
@@ -246,75 +337,54 @@ def list_quant_algos_cmd(
     if not os.path.exists(dataset_path):
         typer.echo(f"Error: Dataset not found at {dataset_path}", err=True)
         raise typer.Exit(code=1)
-        
-    dataset = load_dataset(dataset_path)
+
+    try:
+        dataset = load_dataset(dataset_path)
+    except (OSError, ValueError) as e:
+        typer.echo(f"Error loading dataset: {e}", err=True)
+        raise typer.Exit(code=1)
+
     unique_algos = sorted(list(set(row["quant_algo"] for row in dataset)))
     for algo in unique_algos:
         typer.echo(algo)
 
+
 @app.command(name="contribute")
 def contribute_cmd(
     run_log: Optional[str] = typer.Option(None, "--run-log", "-r", help="Path to JSON or CSV run log"),
-    benchmark: bool = typer.Option(False, "--benchmark", help="Run live guidellm and lm-eval benchmarks"),
-    model_size: Optional[str] = typer.Option(None, "--model-size", "-m", help="Model size for live benchmark mode"),
-    hardware: Optional[str] = typer.Option(None, "--hardware", "-hw", help="Hardware for live benchmark mode"),
-    engine: Optional[str] = typer.Option(None, "--engine", help="Inference engine for live benchmark mode"),
-    quant_algo: Optional[str] = typer.Option(None, "--quant-algo", help="Quantization algo for live benchmark mode"),
-    model: Optional[str] = typer.Option(None, "--model", help="HuggingFace model for live benchmark mode"),
     config_path: Optional[str] = typer.Option(None, "--config", "-c", help="Path to config.yaml")
 ):
     """
     Contribute a benchmark run log to your local dataset and get sharing instructions.
+
+    Accepts a JSON file (single dict or list of dicts) or CSV file.
+    Each row must include all required benchmark fields.
+
+    To share your results back with the community, open a PR to the repository
+    after appending your data.
     """
+    if not run_log:
+        typer.echo("Error: --run-log is required. Provide a JSON or CSV file with your benchmark data.", err=True)
+        raise typer.Exit(code=1)
+
     config = load_config(config_path)
     dataset_path = resolve_dataset_path(config)
 
-    if benchmark:
-        if not model_size or not hardware or not engine or not quant_algo or not model:
-            typer.echo("Error: --model-size, --hardware, --engine, --quant-algo, and --model are required for live benchmark mode.", err=True)
-            raise typer.Exit(code=1)
+    if not os.path.exists(run_log):
+        typer.echo(f"Error: Run log file not found at {run_log}", err=True)
+        raise typer.Exit(code=1)
 
-        typer.echo(f"Running guidellm and lm-eval benchmarks on {model}...")
-        mock_run = {
-            "model_size_b": parse_model_size(model_size),
-            "hardware": hardware.strip().lower(),
-            "inference_engine": engine.strip().lower(),
-            "quant_algo": quant_algo.strip().lower(),
-            "quant_scheme": "w4a16" if quant_algo.strip().lower() in ("awq", "gptq") else "fp16",
-            "prompt_tokens": 128,
-            "output_tokens": 128,
-            "prefix_caching": "false",
-            "ttft_p50_ms": 115.0,
-            "ttft_p95_ms": 165.0,
-            "throughput_tok_s": 42.0,
-            "perplexity_delta": 0.2,
-            "task_score_delta": -0.8,
-            "eval_method": config.get("default_eval_method", "mmlu-5shot"),
-            "eval_sample_size": 200,
-            "vram_gb": 12.5,
-            "source": "automated-benchmark"
-        }
-        runs = [mock_run]
-    else:
-        if not run_log:
-            typer.echo("Error: Must specify --run-log or run with --benchmark", err=True)
-            raise typer.Exit(code=1)
-
-        if not os.path.exists(run_log):
-            typer.echo(f"Error: Run log file not found at {run_log}", err=True)
-            raise typer.Exit(code=1)
-
-        try:
-            if run_log.endswith(".csv"):
-                with open(run_log, "r", encoding="utf-8") as f:
-                    runs = list(csv.DictReader(f))
-            else:
-                with open(run_log, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                    runs = data if isinstance(data, list) else [data]
-        except Exception as e:
-            typer.echo(f"Error parsing run log: {e}", err=True)
-            raise typer.Exit(code=1)
+    try:
+        if run_log.endswith(".csv"):
+            with open(run_log, "r", encoding="utf-8") as f:
+                runs = list(csv.DictReader(f))
+        else:
+            with open(run_log, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                runs = data if isinstance(data, list) else [data]
+    except Exception as e:
+        typer.echo(f"Error parsing run log: {e}", err=True)
+        raise typer.Exit(code=1)
 
     if not runs:
         typer.echo("Error: No runs to contribute", err=True)
@@ -338,8 +408,10 @@ def contribute_cmd(
     typer.echo("4. Commit and push: git push origin add-my-benchmarks")
     typer.echo("5. Open a Pull Request on GitHub.")
 
+
 def main():
     app()
+
 
 if __name__ == "__main__":
     main()

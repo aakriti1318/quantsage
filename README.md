@@ -1,9 +1,9 @@
-![alt text](https://raw.githubusercontent.com/aakriti1318/quantsage/main/image.png)
+![alt text](https://raw.githubusercontent.com/aakriti1318/sage-quant/main/image.png)
 
 <p align="center">
   <a href="https://pypi.org/project/sage-quant/"><img src="https://img.shields.io/pypi/v/sage-quant?color=blue&label=PyPI" alt="PyPI version"></a>
-  <a href="https://github.com/aakriti1318/quantsage"><img src="https://img.shields.io/github/stars/aakriti1318/quantsage?style=social" alt="GitHub stars"></a>
-  <a href="https://github.com/aakriti1318/quantsage/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License MIT"></a>
+  <a href="https://github.com/aakriti1318/sage-quant"><img src="https://img.shields.io/github/stars/aakriti1318/sage-quant?style=social" alt="GitHub stars"></a>
+  <a href="https://github.com/aakriti1318/sage-quant/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License MIT"></a>
 </p>
 
 **SageQuant** is a data-driven CLI tool that helps you choose the optimal serving stack. Given your model size, target hardware, workload shape, and tail latency/quality budget, it recommends the best **inference engine**, **quantization algorithm**, and **bit-width scheme**.
@@ -35,7 +35,7 @@ SageQuant maps tradeoffs across engines and algorithms for the same model and ha
 | **vLLM** | AWQ | w4a16 | 140 / 205ms | 39.5 tok/s | -0.8% (mmlu-5shot, n=200) |
 | **SGLang** | AWQ | w4a16 | 98 / 165ms | 52.0 tok/s | -1.4% (mmlu-5shot, n=200) |
 
-![alt text](https://raw.githubusercontent.com/aakriti1318/quantsage/main/workflow.png)
+![alt text](https://raw.githubusercontent.com/aakriti1318/sage-quant/main/workflow.png)
 
 ---
 
