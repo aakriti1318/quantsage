@@ -69,14 +69,54 @@ Get a copy-pasteable server launch command:
 sage-quant serve-config --model-size 7b --hardware a100-40gb --model meta-llama/Meta-Llama-3-8B-Instruct --prefer-engine sglang
 ```
 
+### 4. Contribute Benchmarks
+If you have run benchmarks locally, you can append your run log and share it with the community. You can refer to [my_run.json](my_run.json) for the expected input JSON format:
+```bash
+sage-quant contribute --run-log my_run.json
+```
+This command automatically validates your data, appends it locally, and generates a zero-friction, pre-filled link to open a GitHub Issue with your contribution:
+
+![GitHub Issue Pre-filled Contribution](https://raw.githubusercontent.com/aakriti1318/sage-quant/main/contribute_issue.png)
+
 ---
 
 ## Command Reference
 
-- `sage-quant recommend` — Find optimal engine, algorithm, and scheme. Supports `--prompt-tokens`, `--output-tokens`, and `--prefer-engine`.
-- `sage-quant serve-config` — Generate vLLM/SGLang/MLX launch configuration scripts or YAML files.
-- `sage-quant list-hardware` / `list-engines` / `list-quant-algos` — Check what combinations are currently covered in the dataset.
-- `sage-quant contribute` — Append custom benchmark runs (`JSON`/`CSV`) to the local dataset and get instructions to open a PR.
+### `sage-quant recommend`
+Find the optimal engine, algorithm, and scheme based on latency/quality constraints.
+```bash
+sage-quant recommend --model-size 7b --hardware a100-40gb --max-latency 200ms --min-quality 98 --prompt-tokens 128 --output-tokens 128
+```
+
+### `sage-quant serve-config`
+Generate runnable vLLM/SGLang/MLX launch configuration scripts or YAML files.
+```bash
+sage-quant serve-config --model-size 7b --hardware a100-40gb --model meta-llama/Meta-Llama-3-8B-Instruct
+```
+
+### `sage-quant list-hardware`
+List all unique hardware configurations in the dataset.
+```bash
+sage-quant list-hardware
+```
+
+### `sage-quant list-engines`
+List all unique inference engines in the dataset.
+```bash
+sage-quant list-engines
+```
+
+### `sage-quant list-quant-algos`
+List all unique quantization algorithms in the dataset.
+```bash
+sage-quant list-quant-algos
+```
+
+### `sage-quant contribute`
+Append custom benchmark runs to the local dataset and get zero-friction sharing instructions.
+```bash
+sage-quant contribute --run-log my_run.json
+```
 
 ---
 
