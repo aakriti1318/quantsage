@@ -58,21 +58,34 @@ def parse_latency(latency_str: Optional[str]) -> Optional[float]:
     return val
 
 
+def resolve_user_dataset_path() -> str:
+    """
+    Always returns the user-writable dataset path at ~/.sage-quant/benchmarks.csv.
+    Used by 'contribute' to avoid writing back into the pip-installed package.
+    """
+    return os.path.expanduser("~/.sage-quant/benchmarks.csv")
+
+
 def resolve_dataset_path(config: Dict[str, Any]) -> str:
     """
-    Resolve the dataset path. Priority:
+    Resolve the dataset path for READ commands. Priority:
     1. Explicit dataset_path from config file.
-    2. Bundled data/benchmarks.csv inside the package (survives pip install).
-    3. Fallback: relative to the package directory (for dev/editable installs).
+    2. User's local dataset at ~/.sage-quant/benchmarks.csv (merged contributions).
+    3. Bundled data/benchmarks.csv inside the package (survives pip install).
+    4. Fallback: relative to the package directory (for dev/editable installs).
     """
     dataset_path = config.get("dataset_path")
     if dataset_path:
         return os.path.expanduser(dataset_path)
 
+    # Prefer user-local dataset (includes contributed runs) if it exists
+    user_path = resolve_user_dataset_path()
+    if os.path.exists(user_path):
+        return user_path
+
     # Use importlib.resources to find the bundled file after pip install
     try:
         import importlib.resources as pkg_resources
-        # Python 3.9+
         ref = pkg_resources.files("sage_quant").joinpath("datasets/benchmarks.csv")
         with pkg_resources.as_file(ref) as p:
             if os.path.exists(str(p)):
@@ -368,7 +381,10 @@ def contribute_cmd(
         raise typer.Exit(code=1)
 
     config = load_config(config_path)
-    dataset_path = resolve_dataset_path(config)
+    # IMPORTANT: contribute always writes to the user's local path (~/.sage-quant/)
+    # NOT to the bundled dataset inside the pip install directory.
+    dataset_path = config.get("dataset_path") or resolve_user_dataset_path()
+    dataset_path = os.path.expanduser(dataset_path)
 
     if not os.path.exists(run_log):
         typer.echo(f"Error: Run log file not found at {run_log}", err=True)
