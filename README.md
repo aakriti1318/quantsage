@@ -1,4 +1,4 @@
-![alt text](image.png)
+![alt text](https://raw.githubusercontent.com/aakriti1318/quantsage/main/image.png)
 
 **SageQuant** is a data-driven CLI tool that helps you choose the optimal serving stack. Given your model size, target hardware, workload shape, and tail latency/quality budget, it recommends the best **inference engine**, **quantization algorithm**, and **bit-width scheme**.
 
@@ -29,7 +29,7 @@ SageQuant maps tradeoffs across engines and algorithms for the same model and ha
 | **vLLM** | AWQ | w4a16 | 140 / 205ms | 39.5 tok/s | -0.8% (mmlu-5shot, n=200) |
 | **SGLang** | AWQ | w4a16 | 98 / 165ms | 52.0 tok/s | -1.4% (mmlu-5shot, n=200) |
 
-![alt text](workflow.png)
+![alt text](https://raw.githubusercontent.com/aakriti1318/quantsage/main/workflow.png)
 
 ---
 
